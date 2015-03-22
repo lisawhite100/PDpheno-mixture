@@ -1,2 +1,2 @@
 # PDpheno-mixture
-Defining the pharmacodynamic phenotype of artemisinin resistant falciparum malaria
+Defining the in vivo phenotype of artemisinin resistant falciparum malaria
