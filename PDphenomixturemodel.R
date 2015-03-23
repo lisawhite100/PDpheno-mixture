@@ -1,6 +1,6 @@
 ##########################################################
 #### ANALYSIS OF THE PUBLICATION ENTITLED #### 
-#    Defining the pharmacodynamic clinical phenotype of artemisinin resistant falciparum malaria : 
+#    Defining the in vivo clinical phenotype of artemisinin resistant falciparum malaria : 
 #    A modelling approach 
 ##########################################################
 
@@ -1147,3 +1147,189 @@ for (i in 7:7){
   plot((1:9)/10,((1:9)/(1:9))*(i-0.5)/10,type="l",xlim = c(0,1),ylim=c(0,1),col=rgb(0,(7-i)*30,i*30,150,maxColorValue=255),lwd = 3)
 }
 
+# simulation experiment to test model selection algorithm forpredicting the number of components
+
+nit<-5*1000 #number of mixture distributions for testing (must be divisible by 5)
+pick<-matrix(NA,nrow=nit,ncol=20) # output matrix
+maxcomp<-5 # maximum number of components
+samplesize<-1000 # sample size for each distribution 
+M<-maxcomp
+pval<-0.1 #significance level for comparing models
+nboot<-10 # number of iterations for bootstrap
+maxmean<-10
+
+# INPUTS
+# col1 - mean 1
+# col2 - mean 2
+# col3 - mean 3
+# col4 - mean 4
+# col5 - mean 5
+# col6 - propotion 1
+# col7 - propotion 2
+# col8 - propotion 3
+# col9 - propotion 4
+# col10 - propotion 5
+# OUTPUTS
+# col11 - mean 1
+# col12 - mean 2
+# col13 - mean 3
+# col14 - mean 4
+# col15 - mean 5
+# col16 - propotion 1
+# col17 - propotion 2
+# col18 - propotion 3
+# col19 - propotion 4
+# col20 - propotion 5
+
+# randomly select mean for each component distribution
+for (i in 1:nit){
+  k<-sample.int(5, size = 5, replace = FALSE, prob = NULL)
+  for (j in 1:5){
+    pick[i,j]<-runif(1,min=(k[j]-1)*maxmean/5,max=k[j]*maxmean/5)
+  }
+}
+
+# randomly select an sd for each set of distributions
+sdev<-matrix(NA,nrow=nit,ncol=1)
+sdev<-runif(nit,min=0,max=0.2)
+
+# number of components for each distribution
+ncomp<-matrix(NA,nrow=1,ncol=nit)
+for (j in 1:5){
+  ncomp[((j-1)*(nit/5)+1):(j*(nit/5))]<-j  
+}
+
+# randomly select proportion for each component
+pick[,6:10]<-0
+for (i in 1:nit){
+  if (ncomp[i]==1){
+    pick[i,6]<-1
+  }
+  if (ncomp[i]>1){
+    pick[i,6:(5+ncomp[i])]<-runif(ncomp[i],min=0,max=1)
+    pick[i,6:(5+ncomp[i])]<-pick[i,6:(5+ncomp[i])]/sum(pick[i,6:(5+ncomp[i])])
+  } 
+}
+
+mixdat<-matrix(NA,nrow=(samplesize+1),ncol=(nit+1)) #matrix of input distribution samples
+mixdat[2:(nit+1),(nit+1)]<-samplesize
+
+q<-matrix(NA, nrow=nit,ncol=samplesize)
+pp<-matrix(NA,nrow=nit,ncol=5)
+qmean<-matrix(NA, nrow=nit,ncol=samplesize)
+
+for (i in 1:nit){
+  for (k in 1:5){
+    pp[i,k]<-sum(pick[i,6:(5+k)])
+  }
+  for (j in 1: samplesize){
+    q[i,j]<-runif(1,min=0,max=1)
+    qmean[i,j]<-(q[i,j]<=pp[i,1])*pick[i,1]+(q[i,j]>pp[i,1])*(q[i,j]<=pp[i,2])*pick[i,2]+(q[i,j]>pp[i,2])*(q[i,j]<=pp[i,3])*pick[i,3]+(q[i,j]>pp[i,3])*(q[i,j]<=pp[i,4])*pick[i,4]+(q[i,j]>pp[i,4])*pick[i,5]
+    mixdat[j+1,i]<-exp(rnorm(1,mean=log(qmean[i,j]),sd=sdev[i]))
+  }
+}
+
+N<-ncol(mixdat)-1
+
+output.mu <- matrix(NA,nrow=M,ncol=N)
+output.sigma <- matrix(NA,nrow=M,ncol=N)
+output.lambda <- matrix(NA,nrow=M,ncol=N)
+output.loglik <- matrix(NA,nrow=M,ncol=N)
+output.mu.se <- matrix(NA,nrow=M,ncol=N)
+output.sigma.se <- matrix(NA,nrow=M,ncol=N)
+output.lambda.se <- matrix(NA,nrow=M,ncol=N)
+AIC<-matrix(0,nrow=M,ncol=N)
+AICdelta<-matrix(0,nrow=M,ncol=N)
+
+nb<-na.omit(mixdat[,N+1])
+
+for (i in 1:N){
+  # 1 COMPONENT LOG NORMAL
+  nmixdat<-na.omit(mixdat[,i])
+  lmixdat<- log(nmixdat)
+  xll<-fitdistr(lmixdat,"normal")
+  output.loglik[1,i]<- xll$loglik
+  output.mu[1,i]<-xll$estimate[1]
+  output.lambda[1,i]<-1
+  output.sigma[1,i]<-xll$estimate[2]
+  output.mu.se[1,i]<-xll$sd[1]
+  output.sigma.se[1,i]<-xll$sd[2]
+  output.lambda.se[1,i]<-0
+  AIC[1,i]<-2*(3*1-1)-2*output.loglik[1,i]
+  AICdelta[1,i]<-0
+}
+for (i in 1:N){
+  nmixdat<-na.omit(mixdat[,i])
+  lmixdat<- log(nmixdat)
+  # >=2 COMPONENTS LOG NORMAL
+  j<-1
+  while((j<=M-1) && AICdelta[j,i]<=pval){
+    j<-j+1
+    res <- normalmixEM(lmixdat, lambda = matrix((1/j),nrow=1,ncol=j), mu = 2*(1:j)/j, sigma = 0.3*matrix(1,nrow=1,ncol=j))
+    resboot <- boot.se(res, B = nboot)
+    resboot[c("lambda.se", "mu.se", "sigma.se","loglik.se")]  
+    output.loglik[j,i]<-res$loglik
+    AIC[j,i]<-2*(3*j-1)-2*output.loglik[j,i]
+    AICdelta[j,i]<-exp(-(AIC[j-1,i]-AIC[j,i])/2)
+    if(AICdelta[j,i]<=pval){
+      output.mu[1:j,i]<-res$mu
+      output.sigma[1:j,i]<-res$sigma
+      output.lambda[1:j,i]<-res$lambda
+      output.mu.se[1:j,i]<-resboot$mu.se
+      output.sigma.se[1:j,i]<-resboot$sigma.se
+      output.lambda.se[1:j,i]<-resboot$lambda.se  		
+    }
+  }
+}
+
+pick[,11:15]<-t(exp(output.mu))
+pick[,16:20]<-t(output.lambda)
+
+# assess model performance
+
+predncomp<-matrix(NA,nrow=nit,ncol=1)
+for (i in 1:nit){
+  predncomp[i]<-5-sum(is.na(pick[i,11:16]))
+}
+
+predncompmed<-matrix(NA,nrow=1,ncol=5)
+predncomplow<-matrix(NA,nrow=1,ncol=5)
+predncomphigh<-matrix(NA,nrow=1,ncol=5)
+predncompmean<-matrix(NA,nrow=1,ncol=5)
+perccorrect<-matrix(NA,nrow=1,ncol=5)
+
+accncomp<-t(ncomp)==predncomp
+
+# plotting
+
+for (j in 1:5){
+  predncompmed[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.5)
+  predncomplow[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.05)
+  predncomphigh[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.95) 
+  predncompmean[j]<-mean(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))])
+  perccorrect[j]<-100*mean(accncomp[((j-1)*(nit/5)+1):(j*(nit/5))])
+}
+
+
+plot(seq(1:5),perccorrect, type="l",lwd=5,xlim=c(1,5),ylim=c(0,100),xlab = "True number of components",ylab="% correct prediction")
+
+plot(0,xlim=c(1,5),xaxt = "n",ylim=c(1,5),xlab = "True number of components",ylab="predicted number of components")
+axis(1,at=1:5,1:5)
+par(new=T)
+polygon(c(seq(1,5), rev(seq(1,5))), c(predncomphigh, rev(predncomplow)),col = "grey80", border = NA)
+lines(seq(1:5),predncompmed,lwd=5,ps=20)
+lines(seq(1:5),predncompmean,lwd=3,ps=20, col="grey10", lty=3)
+
+
+for (j in 1:5){
+  predncompmed[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.5)
+  predncomplow[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.25)
+  predncomphigh[j]<-quantile(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))],probs=0.75) 
+  predncompmean[j]<-mean(predncomp[((j-1)*(nit/5)+1):(j*(nit/5))])
+  perccorrect[j]<-100*mean(accncomp[((j-1)*(nit/5)+1):(j*(nit/5))])
+}
+
+
+polygon(c(seq(1,5), rev(seq(1,5))), c(predncomphigh, rev(predncomplow)),col = "grey50", border = NA)
+lines(seq(1:5),predncompmed,lwd=5,ps=20)
+lines(seq(1:5),predncompmean,lwd=3,ps=20, col="grey10", lty=3)
